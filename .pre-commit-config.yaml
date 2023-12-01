@@ -1,10 +1,4 @@
 repos:
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.1.1
-    hooks:
-      - id: ruff
-        args:
-          - --fix
   - repo: https://github.com/psf/black-pre-commit-mirror
     rev: 23.11.0
     hooks:
@@ -22,18 +16,6 @@ repos:
           - --quiet-level=2
         exclude_types: [csv, json]
         exclude: ^tests/fixtures/|homeassistant/generated/|tests/components/.*/snapshots/
-  - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.4.0
-    hooks:
-      - id: check-executables-have-shebangs
-        stages: [manual]
-      - id: check-json
-        exclude: (.vscode|.devcontainer)
-      - id: no-commit-to-branch
-        args:
-          - --branch=dev
-          - --branch=master
-          - --branch=rc
   - repo: https://github.com/adrienverge/yamllint.git
     rev: v1.32.0
     hooks:

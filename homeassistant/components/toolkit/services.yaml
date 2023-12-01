@@ -1,0 +1,36 @@
+execute_shutter_commands:
+  fields:
+    lock_group:
+      required: true
+      selector:
+        text:
+    devices:
+      required: true
+      selector:
+        text:
+    command:
+      required: true
+      selector:
+        text:
+thermal_actuator_start_circulation:
+  fields:
+    ieee:
+      required: true
+      selector:
+        text:
+    warmup_seconds:
+      required: true
+      selector:
+        number:
+    intermediate_off_seconds:
+      required: true
+      selector:
+        number:
+    intermediate_on_seconds:
+      required: true
+      selector:
+        number:
+    intermediate_retry_seconds:
+      required: true
+      selector:
+        number:
