@@ -1,5 +1,5 @@
 """const"""
-from homeassistant.backports.enum import StrEnum
+from enum import StrEnum
 from homeassistant.const import ATTR_ENTITY_ID
 import homeassistant.helpers.config_validation as cv
 
@@ -8,13 +8,16 @@ import voluptuous as vol
 
 DEFAULT_TOLERANCE = 0.3
 DEFAULT_NAME = "Dual Smart"
+DEFAULT_MIN_CEILING_TEMP = 18.0
 DEFAULT_MAX_FLOOR_TEMP = 28.0
 
 CONF_HEATER = "heater"
 CONF_COOLER = "cooler"
 CONF_SENSOR = "target_sensor"
+CONF_CEILING_SENSOR = "celing_sensor"
 CONF_FLOOR_SENSOR = "floor_sensor"
 CONF_MIN_TEMP = "min_temp"
+CONF_MIN_CEILING_TEMP = "max_floor_temp"
 CONF_MAX_TEMP = "max_temp"
 CONF_MAX_FLOOR_TEMP = "max_floor_temp"
 CONF_TARGET_TEMP = "target_temp"

@@ -16,7 +16,7 @@ from homeassistant.core import HomeAssistant
 
 from homeassistant.helpers import condition
 
-from custom_components.dual_smart_thermostat.const import (
+from .const import (
     ATTR_TIMEOUT,
     TIMED_OPENING_SCHEMA,
 )

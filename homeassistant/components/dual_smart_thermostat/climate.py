@@ -50,18 +50,20 @@ from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from custom_components.dual_smart_thermostat.opening_manager import OpeningManager
+from .opening_manager import OpeningManager
 
 from .const import (
     CONF_AC_MODE,
     CONF_COLD_TOLERANCE,
     CONF_COOLER,
+    CONF_CEILING_SENSOR,
     CONF_FLOOR_SENSOR,
     CONF_HEATER,
     CONF_HEAT_COOL_MODE,
     CONF_HOT_TOLERANCE,
     CONF_INITIAL_HVAC_MODE,
     CONF_KEEP_ALIVE,
+    CONF_MIN_CEILING_TEMP,
     CONF_MAX_FLOOR_TEMP,
     CONF_MAX_TEMP,
     CONF_MIN_DUR,
@@ -74,6 +76,7 @@ from .const import (
     CONF_TARGET_TEMP_LOW,
     CONF_TEMP_STEP,
     ATTR_TIMEOUT,
+    DEFAULT_MIN_CEILING_TEMP,
     DEFAULT_MAX_FLOOR_TEMP,
     DEFAULT_NAME,
     DEFAULT_TOLERANCE,
@@ -121,6 +124,9 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
         vol.Optional(CONF_MAX_TEMP): vol.Coerce(float),
         vol.Optional(CONF_MIN_DUR): vol.All(cv.time_period, cv.positive_timedelta),
         vol.Optional(CONF_MIN_TEMP): vol.Coerce(float),
+        vol.Optional(
+            CONF_MIN_CEILING_TEMP, default=DEFAULT_MIN_CEILING_TEMP
+        ): vol.Coerce(float),
         vol.Optional(CONF_MAX_FLOOR_TEMP, default=DEFAULT_MAX_FLOOR_TEMP): vol.Coerce(
             float
         ),
@@ -171,10 +177,11 @@ async def async_setup_platform(
                 "'cooler' entity will be ignored"
             )
             cooler_entity_id = None
+    sensor_ceiling_entity_id = config.get(CONF_CEILING_SENSOR)
     sensor_floor_entity_id = config.get(CONF_FLOOR_SENSOR)
     openings = config.get(CONF_OPENINGS)
     min_temp = config.get(CONF_MIN_TEMP)
-    min_ceiling_temp = config.get(CONF_MAX_FLOOR_TEMP)
+    min_ceiling_temp = config.get(CONF_MIN_CEILING_TEMP)
     max_temp = config.get(CONF_MAX_TEMP)
     max_floor_temp = config.get(CONF_MAX_FLOOR_TEMP)
     target_temp = config.get(CONF_TARGET_TEMP)
@@ -226,6 +233,7 @@ async def async_setup_platform(
                 heater_entity_id,
                 cooler_entity_id,
                 sensor_entity_id,
+                sensor_ceiling_entity_id,
                 sensor_floor_entity_id,
                 min_temp,
                 min_ceiling_temp,
@@ -262,6 +270,7 @@ class DualSmartThermostat(ClimateEntity, RestoreEntity):
         heater_entity_id,
         cooler_entity_id,
         sensor_entity_id,
+        sensor_ceiling_entity_id,
         sensor_floor_entity_id,
         min_temp,
         min_ceiling_temp,
@@ -291,6 +300,7 @@ class DualSmartThermostat(ClimateEntity, RestoreEntity):
         self.heater_entity_id = heater_entity_id
         self.cooler_entity_id = cooler_entity_id
         self.sensor_entity_id = sensor_entity_id
+        self.sensor_ceiling_entity_id = sensor_ceiling_entity_id
         self.sensor_floor_entity_id = sensor_floor_entity_id
         self.opening_manager = opening_manager
 
@@ -328,6 +338,7 @@ class DualSmartThermostat(ClimateEntity, RestoreEntity):
             self._hvac_mode = None
         self._active = False
         self._cur_temp = None
+        self._cur_ceiling_temp = None
         self._cur_floor_temp = None
         self._temp_lock = asyncio.Lock()
         self._min_temp = min_temp
@@ -375,7 +386,14 @@ class DualSmartThermostat(ClimateEntity, RestoreEntity):
                     self._async_cooler_changed,
                 )
             )
-
+        if self.sensor_ceiling_entity_id is not None:
+            self.async_on_remove(
+                async_track_state_change_event(
+                    self.hass,
+                    [self.sensor_ceiling_entity_id],
+                    self._async_sensor_ceiling_changed,
+                )
+            )
         if self.sensor_floor_entity_id is not None:
             self.async_on_remove(
                 async_track_state_change_event(
@@ -723,6 +741,17 @@ class DualSmartThermostat(ClimateEntity, RestoreEntity):
         await self._async_control_climate()
         self.async_write_ha_state()
 
+    async def _async_sensor_ceiling_changed(self, event):
+        """Handle ceiling temperature changes."""
+        new_state = event.data.get("new_state")
+        _LOGGER.info("Sensor ceiling change: %s", new_state)
+        if new_state is None or new_state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
+            return
+
+        self._async_update_ceiling_temp(new_state)
+        await self._async_control_climate()
+        self.async_write_ha_state()
+
     async def _async_sensor_floor_changed(self, event):
         """Handle floor temperature changes."""
         new_state = event.data.get("new_state")
@@ -820,8 +849,16 @@ class DualSmartThermostat(ClimateEntity, RestoreEntity):
             _LOGGER.error("Unable to update from sensor: %s", ex)
 
     @callback
+    def _async_update_ceiling_temp(self, state):
+        """Update thermostat with latest floor temp state from floor temp sensor."""
+        try:
+            self._cur_ceiling_temp = float(state.state)
+        except ValueError as ex:
+            _LOGGER.error("Unable to update from floor temp sensor: %s", ex)
+
+    @callback
     def _async_update_floor_temp(self, state):
-        """Update ermostat with latest floor temp state from floor temp sensor."""
+        """Update thermostat with latest floor temp state from floor temp sensor."""
         try:
             self._cur_floor_temp = float(state.state)
         except ValueError as ex:
@@ -889,6 +926,7 @@ class DualSmartThermostat(ClimateEntity, RestoreEntity):
                 return
 
             too_cold = self._is_too_cold()
+            ceiling_too_cold = self._is_ceiling_cold
             too_hot = self._is_too_hot()
 
             cooler_set = self.cooler_entity_id is not None
@@ -916,7 +954,7 @@ class DualSmartThermostat(ClimateEntity, RestoreEntity):
             any_opening_open = self.opening_manager.any_opening_open
 
             if is_device_active:
-                if too_cold or any_opening_open:
+                if too_cold or ceiling_too_cold or any_opening_open:
                     _LOGGER.info("Turning off cooler %s", control_entity)
                     await control_off()
                 elif time is not None and not any_opening_open:
@@ -927,7 +965,7 @@ class DualSmartThermostat(ClimateEntity, RestoreEntity):
                     )
                     await control_on()
             else:
-                if too_hot and not any_opening_open:
+                if too_hot and not ceiling_too_cold and not any_opening_open:
                     _LOGGER.info("Turning on cooler (from inactive) %s", control_entity)
                     await control_on()
                 elif time is not None or any_opening_open:
@@ -1078,13 +1116,15 @@ class DualSmartThermostat(ClimateEntity, RestoreEntity):
 
     async def _async_switch_turn_off(self, entity_id):
         """Turn toggleable device off."""
+        _LOGGER.info("Turn toggleable device on")
         data = {ATTR_ENTITY_ID: entity_id}
         await self.hass.services.async_call(
             HA_DOMAIN, SERVICE_TURN_OFF, data, context=self._context
         )
 
     async def _async_switch_turn_on(self, entity_id):
-        """Turn toggleable device off."""
+        """Turn toggleable device on."""
+        _LOGGER.info("Turn toggleable device on")
         data = {ATTR_ENTITY_ID: entity_id}
         await self.hass.services.async_call(
             HA_DOMAIN, SERVICE_TURN_ON, data, context=self._context
@@ -1159,10 +1199,13 @@ class DualSmartThermostat(ClimateEntity, RestoreEntity):
 
     def _needs_cycle(self, dual=False, cool=False):
         long_enough = self._ran_long_enough(cool)
+        _LOGGER.info(f"Needs cycle1: %s dual:%s cool:%s", long_enough, dual, cool)
         if not dual or cool or self.cooler_entity_id is None:
             return long_enough
 
         long_enough_cooler = self._ran_long_enough(True)
+
+        _LOGGER.info(f"Needs cycle2: %s %s", long_enough, long_enough_cooler)
         return long_enough and long_enough_cooler
 
     def _is_too_cold(self, target_attr="_target_temp") -> bool:
